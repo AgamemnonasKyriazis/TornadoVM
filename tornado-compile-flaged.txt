@@ -1,0 +1,1 @@
+tornado -m tornado.examples/uk.ac.manchester.tornado.examples.arrays.ArrayAddInt --jvm="-Ds0.t0.device=0:1 -Dtornado.fullDebug=true -Dtornado.printKernel=true -Dtornado.print.kernel.dir=/home/menios/kernel.cl"
