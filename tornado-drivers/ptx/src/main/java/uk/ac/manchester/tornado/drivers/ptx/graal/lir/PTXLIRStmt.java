@@ -50,7 +50,6 @@ import static uk.ac.manchester.tornado.drivers.ptx.graal.asm.PTXAssemblerConstan
 
 import java.nio.charset.StandardCharsets;
 
-import jdk.vm.ci.meta.Constant;
 import jdk.vm.ci.meta.ValueKind;
 import org.graalvm.compiler.lir.ConstantValue;
 import org.graalvm.compiler.lir.LIRInstruction;
@@ -79,6 +78,436 @@ public class PTXLIRStmt {
         }
 
         public abstract void emitCode(PTXCompilationResultBuilder crb, PTXAssembler asm);
+    }
+
+    @Opcode("SET_PRED_CONST")
+    public static class SetPredicateConstStmt extends AbstractInstruction {
+        public static final LIRInstructionClass<SetPredicateConstStmt> TYPE = LIRInstructionClass.create(SetPredicateConstStmt.class);
+
+        @Def protected Value result;
+        private final boolean value;
+
+        public SetPredicateConstStmt(Value result, boolean value) {
+            super(TYPE);
+            this.result = result;
+            this.value = value;
+        }
+
+        @Override
+        public void emitCode(PTXCompilationResultBuilder crb, PTXAssembler asm) {
+            if (value) {
+                // If value is true, set predicate to always true
+                // Emits: setp.ne.u32 <result>, 1, 0;
+                asm.emitSymbol(TAB);
+                asm.emit("setp.ne.u32");
+                asm.emitSymbol(TAB);
+                asm.emitValue(result);
+                asm.emitSymbol(COMMA);
+                asm.emitSymbol(SPACE);
+                asm.emit("1");
+                asm.emitSymbol(COMMA);
+                asm.emitSymbol(SPACE);
+                asm.emit("0");
+                asm.delimiter();
+                asm.eol();
+            } else {
+                // else, if value is false, set it to always false
+                // Emits: setp.eq.u32 <result>, 1, 0;
+                asm.emitSymbol(TAB);
+                asm.emit("setp.eq.u32");
+                asm.emitSymbol(TAB);
+                asm.emitValue(result);
+                asm.emitSymbol(COMMA);
+                asm.emitSymbol(SPACE);
+                asm.emit("1");
+                asm.emitSymbol(COMMA);
+                asm.emitSymbol(SPACE);
+                asm.emit("0");
+                asm.delimiter();
+                asm.eol();
+            }
+        }
+    }
+
+    @Opcode("DP4APACKED")
+    public static class Dp4aPackedStmt extends AbstractInstruction {
+        public static final LIRInstructionClass<Dp4aPackedStmt> TYPE = LIRInstructionClass.create(Dp4aPackedStmt.class);
+
+        @Def
+        protected Value result;
+        @Use
+        protected Value a;
+        @Use
+        protected Value b;
+        @Use
+        protected Value c;
+
+        public Dp4aPackedStmt(Value result, Value a, Value b, Value c) {
+            super(TYPE);
+            this.result = result;
+            this.a = a;
+            this.b = b;
+            this.c = c;
+        }
+
+        @Override
+        public void emitCode(PTXCompilationResultBuilder crb, PTXAssembler asm) {
+            asm.emitSymbol(TAB);
+            asm.emit("dp4a.s32.s32 ");
+            asm.emitValue(result);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(a);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(b);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(c);
+            asm.delimiter();
+            asm.eol();
+        }
+
+    }
+
+    @Opcode("DP4A")
+    public static class Dp4aStmt extends AbstractInstruction {
+
+        public static final LIRInstructionClass<Dp4aStmt> TYPE = LIRInstructionClass.create(Dp4aStmt.class);
+
+        @Def
+        protected Value result;
+        @Use
+        protected Value int8_a_base;
+        @Def
+        protected Value load_four_int8_bytes_a;
+        @Use
+        protected Value int8_b_base;
+        @Def
+        protected Value load_four_int8_bytes_b;
+        @Use
+        protected Value accumulator_c;
+        @Use
+        protected Value offset_a;
+        @Def
+        protected Value cnv_offset_a;
+        @Def
+        protected Value add_header_offset_a;
+        @Use
+        protected Value offset_b;
+        @Def
+        protected Value cnv_offset_b;
+        @Def
+        protected Value add_header_offset_b;
+        @Def
+        protected Value offseted_address_a;
+        @Def
+        protected Value offseted_address_b;
+        @Def
+        protected Value header_size;
+
+        public Dp4aStmt(Value result, Value int8_a_base, Value load_four_int8_bytes_a, Value int8_b_base, Value load_four_int8_bytes_b, Value accumulator_c, Value offset_a, Value cnv_offset_a, Value add_header_offset_a, Value offset_b, Value cnv_offset_b, Value add_header_offset_b, Value offseted_address_a, Value offseted_address_b, Value header_size) {
+            super(TYPE);
+            this.result = result;
+            this.int8_a_base = int8_a_base;
+            this.load_four_int8_bytes_a = load_four_int8_bytes_a;
+            this.int8_b_base = int8_b_base;
+            this.load_four_int8_bytes_b = load_four_int8_bytes_b;
+            this.accumulator_c = accumulator_c;
+            this.offset_a = offset_a;
+            this.cnv_offset_a = cnv_offset_a;
+            this.add_header_offset_a = add_header_offset_a;
+            this.offset_b = offset_b;
+            this.cnv_offset_b = cnv_offset_b;
+            this.add_header_offset_b = add_header_offset_b;
+            this.offseted_address_a = offseted_address_a;
+            this.offseted_address_b = offseted_address_b;
+            this.header_size = header_size;
+        }
+
+        @Override
+        public void emitCode(PTXCompilationResultBuilder crb, PTXAssembler asm) {
+            // instructions to calculate dp4a: dp4a.s32.s32 result, a, b, c;
+
+            // add header bytes to offset of a
+            asm.emitSymbol(TAB);
+            asm.emitSymbol("add.u64 ");
+            asm.emitValue(add_header_offset_a);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(offset_a);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(header_size);
+            asm.delimiter();
+            asm.eol();
+
+            //add offset to base address of buffer a
+            asm.emitSymbol(TAB);
+            asm.emit("add.u64 ");
+            asm.emitValue(offseted_address_a);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(int8_a_base);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(add_header_offset_a);
+            asm.delimiter();
+            asm.eol();
+
+            // load from offseted address of buffer a
+            asm.emitSymbol(TAB);
+            asm.emit("ld.global.s32 ");
+            asm.emitValue(load_four_int8_bytes_a);
+            asm.emitSymbol(COMMA + SPACE + "[");
+            asm.emitValue(offseted_address_a);
+            asm.emitSymbol("]");
+            asm.delimiter();
+            asm.eol();
+
+            // add header bytes to offset of b
+            asm.emitSymbol(TAB);
+            asm.emitSymbol("add.u64 ");
+            asm.emitValue(add_header_offset_b);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(offset_b);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(header_size);
+            asm.delimiter();
+            asm.eol();
+
+            //add offset to base address of buffer b
+            asm.emitSymbol(TAB);
+            asm.emit("add.u64 ");
+            asm.emitValue(offseted_address_b);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(int8_b_base);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(add_header_offset_b);
+            asm.delimiter();
+            asm.eol();
+
+            // load from offseted address of buffer b
+            asm.emitSymbol(TAB);
+            asm.emit("ld.global.s32 ");
+            asm.emitValue(load_four_int8_bytes_b);
+            asm.emitSymbol(COMMA + SPACE + "[");
+            asm.emitValue(offseted_address_b);
+            asm.emitSymbol("]");
+            asm.delimiter();
+            asm.eol();
+
+            // perform dp4a
+            asm.emitSymbol(TAB);
+            asm.emit("dp4a.s32.s32 ");
+            asm.emitValue(result);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(load_four_int8_bytes_a);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(load_four_int8_bytes_b);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(accumulator_c);
+            asm.delimiter();
+            asm.eol();
+        }
+
+    }
+
+    @Opcode("DP4A_LOCAL_MEMORY")
+    public static class Dp4aLocalMemoryStmt extends AbstractInstruction {
+
+        public static final LIRInstructionClass<Dp4aLocalMemoryStmt> TYPE = LIRInstructionClass.create(Dp4aLocalMemoryStmt.class);
+
+        @Def
+        protected Value result;
+        @Use
+        protected Value int8_a_base;
+        @Def
+        protected Value load_four_int8_bytes_a;
+        @Def
+        protected Value load_four_int8_bytes_b;
+        @Use
+        protected Value accumulator_c;
+        @Use
+        protected Value offset_a;
+        @Def
+        protected Value add_header_offset_a;
+        @Use
+        protected Value offset_b;
+        @Def
+        protected Value offseted_address_a;
+        @Use
+        protected Value local_array_base;
+        @Def
+        protected Value header_size;
+
+        public Dp4aLocalMemoryStmt(Value result, Value int8_a_base, Value load_four_int8_bytes_a, Value offset_a, Value add_header_offset_a, Value offseted_address_a, Value accumulator_c, Value offset_b, Value load_four_int8_bytes_b, Value local_array_base, Value header_size) {
+            super(TYPE);
+            this.result = result;
+            this.int8_a_base = int8_a_base;
+            this.load_four_int8_bytes_a = load_four_int8_bytes_a;
+            this.offset_a = offset_a;
+            this.add_header_offset_a = add_header_offset_a;
+            this.offseted_address_a = offseted_address_a;
+            this.accumulator_c = accumulator_c;
+            this.offset_b = offset_b;
+            this.load_four_int8_bytes_b = load_four_int8_bytes_b;
+            this.local_array_base = local_array_base;
+            this.header_size = header_size;
+        }
+
+        @Override
+        public void emitCode(PTXCompilationResultBuilder crb, PTXAssembler asm) {
+            // instructions to calculate dp4a: dp4a.s32.s32 result, a, b, c;
+
+            // add header bytes to offset of a
+            asm.emitSymbol(TAB);
+            asm.emitSymbol("add.u64 ");
+            asm.emitValue(add_header_offset_a);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(offset_a);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(header_size);
+            asm.delimiter();
+            asm.eol();
+
+            //add offset to base address of buffer a
+            asm.emitSymbol(TAB);
+            asm.emit("add.u64 ");
+            asm.emitValue(offseted_address_a);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(int8_a_base);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(add_header_offset_a);
+            asm.delimiter();
+            asm.eol();
+
+            // load from offseted address of buffer a
+            asm.emitSymbol(TAB);
+            asm.emit("ld.global.s32 ");
+            asm.emitValue(load_four_int8_bytes_a);
+            asm.emitSymbol(COMMA + SPACE + "[");
+            asm.emitValue(offseted_address_a);
+            asm.emitSymbol("]");
+            asm.delimiter();
+            asm.eol();
+
+            // load from local memory
+            asm.emitSymbol(TAB);
+            asm.emit("ld.shared.s32 ");
+            asm.emitValue(load_four_int8_bytes_b);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(local_array_base);
+            asm.emitSymbol("[");
+            asm.emitValue(offset_b);
+            asm.emitSymbol("]");
+            asm.delimiter();
+            asm.eol();
+
+            // perform dp4a
+            asm.emitSymbol(TAB);
+            asm.emit("dp4a.s32.s32 ");
+            asm.emitValue(result);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(load_four_int8_bytes_a);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(load_four_int8_bytes_b);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(accumulator_c);
+            asm.delimiter();
+            asm.eol();
+        }
+
+    }
+
+    @Opcode("CAST_COMPRESSED")
+    public static class CastCompressedStmt extends AbstractInstruction {
+
+        public static final LIRInstructionClass<CastCompressedStmt> TYPE = LIRInstructionClass.create(CastCompressedStmt.class);
+
+        @Def
+        protected Value compressed;
+        @Use
+        protected Value address;
+
+        public CastCompressedStmt(Value compressed, Value address) {
+            super(TYPE);
+            this.compressed = compressed;
+            this.address = address;
+        }
+
+        @Override
+        public void emitCode(PTXCompilationResultBuilder crb, PTXAssembler asm) {
+            asm.emitSymbol(TAB);
+            // casts an 8-byte address to a 4-byte pointer
+            // ld.global.u32 %r_compressed, [%r_address];
+            asm.emit("ld.global.u32");
+            asm.space();
+            asm.emitValue(compressed);
+            asm.emit(", [");
+            asm.emitValue(address);
+            asm.emit("]");
+            asm.delimiter();
+            asm.eol();
+
+        }
+
+    }
+
+    @Opcode("DECOMPRESS_POINTER")
+    public static class DecompressPointerStmt extends AbstractInstruction {
+        public static final LIRInstructionClass<DecompressPointerStmt> TYPE = LIRInstructionClass.create(DecompressPointerStmt.class);
+        @Def
+        protected Value decompressed;
+        @Use
+        protected Value base;
+        @Use
+        protected Value compressed;
+        @Def
+        protected Value temp64;
+        @Def
+        protected Value tempShifted;
+
+        public DecompressPointerStmt(Value decompressed, Value base, Value compressed, Value temp64, Value tempShifted) {
+            super(TYPE);
+            this.decompressed = decompressed;
+            this.base = base;
+            this.compressed = compressed;
+            this.temp64 = temp64;
+            this.tempShifted = tempShifted;
+        }
+
+        @Override
+        public void emitCode(PTXCompilationResultBuilder crb, PTXAssembler asm) {
+            // Convert the 32-bit compressed value to 64-bit
+            // cvt.s64.s32 %temp64, %compressed;
+            asm.emitSymbol(TAB);
+            asm.emit("cvt.s64.s32");
+            asm.space();
+            asm.emitValue(temp64);
+            asm.emit(", ");
+            asm.emitValue(compressed);
+            asm.delimiter();
+            asm.eol();
+
+            // Shift the 64-bit value left by 3
+            // shl.b64 %tempShifted, %temp64, 3;
+            asm.emitSymbol(TAB);
+            asm.emit("shl.b64");
+            asm.space();
+            asm.emitValue(tempShifted);
+            asm.emit(", ");
+            asm.emitValue(temp64);
+            asm.emit(", 3");
+            asm.delimiter();
+            asm.eol();
+
+            // Add the base address to the shifted offset
+            // add.u64 %decompressed, %base, %tempShifted;
+            asm.emitSymbol(TAB);
+            asm.emit("add.u64");
+            asm.space();
+            asm.emitValue(decompressed);
+            asm.emit(", ");
+            asm.emitValue(base);
+            asm.emit(", ");
+            asm.emitValue(tempShifted);
+            asm.delimiter();
+            asm.eol();
+        }
     }
 
     @Opcode("DIVHALF")
@@ -437,6 +866,35 @@ public class PTXLIRStmt {
 
     }
 
+    public static class ConvertFloatToHalfStmt extends AbstractInstruction {
+
+        public static final LIRInstructionClass<ConvertFloatToHalfStmt> TYPE = LIRInstructionClass.create(ConvertFloatToHalfStmt.class);
+
+        @Use
+        protected Value floatValue;
+        @Def
+        protected Value halfValue;
+
+        public ConvertFloatToHalfStmt(Value floatValue, Value halfValue) {
+            super(TYPE);
+            this.floatValue = floatValue;
+            this.halfValue = halfValue;
+        }
+
+        @Override
+        public void emitCode(PTXCompilationResultBuilder crb, PTXAssembler asm) {
+            asm.emitSymbol(TAB);
+            asm.emit(CONVERT + DOT + "rn" + DOT + "f16" + DOT + "f32");
+            asm.emitSymbol(SPACE);
+            asm.emitValue(halfValue);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(floatValue);
+            asm.delimiter();
+            asm.eol();
+        }
+
+    }
+
     @Opcode("LOCAL_MEMORY_ACCESS")
     public static class LocalMemoryAccessStmt extends AbstractInstruction {
 
@@ -491,6 +949,8 @@ public class PTXLIRStmt {
             asm.eol();
         }
     }
+
+
 
     @Opcode("ASSIGN")
     public static class AssignStmt extends AbstractInstruction {
@@ -705,6 +1165,12 @@ public class PTXLIRStmt {
         @Use
         PTXNullaryOp loadOp;
 
+        @Use
+        protected Value index;
+
+        @Use
+        protected Value localArray;
+
         public HalfFloatLoadStmt(PTXUnary.MemoryAccess address, Variable dest, PTXNullaryOp op) {
             super(TYPE);
             this.dest = dest;
@@ -712,8 +1178,22 @@ public class PTXLIRStmt {
             this.address = address;
         }
 
-        @Override
-        public void emitCode(PTXCompilationResultBuilder crb, PTXAssembler asm) {
+        public HalfFloatLoadStmt(PTXUnary.MemoryAccess address, Variable dest, PTXNullaryOp op, Value index, Value localArray) {
+            super(TYPE);
+            this.dest = dest;
+            this.loadOp = op;
+            this.address = address;
+            this.index = index;
+            this.localArray = localArray;
+        }
+
+        private boolean isLocalOrSharedLoad() {
+            return address.getBase().memorySpace == PTXMemorySpace.LOCAL ||
+                    address.getBase().memorySpace == PTXMemorySpace.SHARED;
+        }
+
+        public void emitPointerBaseIndexCode(PTXCompilationResultBuilder crb, PTXAssembler asm) {
+            // Emit: ld.global.b16 dest, [address];
             loadOp.emit(crb, null);
             asm.emitSymbol(DOT);
             asm.emit(address.getBase().memorySpace.getName());
@@ -726,6 +1206,36 @@ public class PTXLIRStmt {
             address.emit(crb, asm, null);
             asm.delimiter();
             asm.eol();
+        }
+
+        public void emitIntegerBasedIndexCode(PTXCompilationResultBuilder crb, PTXAssembler asm) {
+            // Emit: ld.shared.b16 dest, arrayName[index];
+            loadOp.emit(crb, null);
+            asm.emitSymbol(DOT);
+            asm.emit("shared");
+            asm.emit(DOT + PTXKind.B16);
+            asm.emitSymbol(TAB);
+
+            asm.emitValue(dest);
+            asm.emitSymbol(COMMA);
+            asm.space();
+
+            asm.emitValue(localArray);
+            asm.emit("[");
+            asm.emitValue(index);
+            asm.emit("]");
+
+            asm.delimiter();
+            asm.eol();
+        }
+
+        @Override
+        public void emitCode(PTXCompilationResultBuilder crb, PTXAssembler asm) {
+            if (isLocalOrSharedLoad()) {
+                emitIntegerBasedIndexCode(crb, asm);
+            } else {
+                emitPointerBaseIndexCode(crb, asm);
+            }
         }
     }
 
@@ -836,6 +1346,11 @@ public class PTXLIRStmt {
         protected Value rhs;
         @Use
         protected PTXUnary.MemoryAccess address;
+        @Use
+        protected Value index;
+
+        @Use
+        protected Value localArray;
 
         public HalfFloatStoreStmt(PTXUnary.MemoryAccess address, Value rhs) {
             super(TYPE);
@@ -843,7 +1358,21 @@ public class PTXLIRStmt {
             this.address = address;
         }
 
-        public void emitNormalCode(PTXCompilationResultBuilder crb, PTXAssembler asm) {
+        public HalfFloatStoreStmt(PTXUnary.MemoryAccess address, Value rhs, Value index, Value localArray) {
+            super(TYPE);
+            this.rhs = rhs;
+            this.address = address;
+            this.index = index;
+            this.localArray = localArray;
+        }
+
+        private boolean isLocalOrSharedLoad() {
+            return address.getBase().memorySpace == PTXMemorySpace.LOCAL ||
+                    address.getBase().memorySpace == PTXMemorySpace.SHARED;
+        }
+
+        public void emitPointerBaseIndexCode(PTXCompilationResultBuilder crb, PTXAssembler asm) {
+            // Emit: st.global.b16 [address], value;
             PTXNullaryOp.ST.emit(crb, null);
             asm.emitSymbol(DOT);
             asm.emit(address.getBase().memorySpace.getName());
@@ -859,9 +1388,35 @@ public class PTXLIRStmt {
             asm.eol();
         }
 
+        public void emitIntegerBasedIndexCode(PTXCompilationResultBuilder crb, PTXAssembler asm) {
+            // Emit: st.shared.b16 arrayName[index], value;
+            PTXNullaryOp.ST.emit(crb, null);
+            asm.emitSymbol(DOT);
+            asm.emit("shared");
+            asm.emit(DOT + PTXKind.B16);
+            asm.emitSymbol(TAB);
+
+            asm.emitValue(localArray);
+            asm.emit("[");
+            asm.emitValue(index);
+            asm.emit("]");
+
+            asm.emitSymbol(COMMA);
+            asm.space();
+
+            asm.emitValueOrOp(crb, rhs, null);
+
+            asm.delimiter();
+            asm.eol();
+        }
+
         @Override
         public void emitCode(PTXCompilationResultBuilder crb, PTXAssembler asm) {
-            emitNormalCode(crb, asm);
+            if (isLocalOrSharedLoad()) {
+                emitIntegerBasedIndexCode(crb, asm);
+            } else {
+                emitPointerBaseIndexCode(crb, asm);
+            }
         }
     }
 
@@ -1109,5 +1664,843 @@ public class PTXLIRStmt {
             asm.eol();
         }
 
+    }
+
+    /**
+     * Emits a PTX {@code shfl.sync} warp-shuffle instruction.
+     *
+     * <p>Syntax: {@code shfl.sync.<mode>.b32 dest, src, operand, clamp, membermask;}
+     * <ul>
+     *   <li>{@code DOWN} — each lane receives the value from the lane {@code operand} positions ahead</li>
+     *   <li>{@code IDX}  — each lane receives the value from lane {@code operand}</li>
+     * </ul>
+     *
+     * <p>The clamp value is fixed at 31 (maximum lane ID) and the member mask at
+     * {@code 0xFFFFFFFF} (full 32-lane warp participation).
+     */
+    @Opcode("SHFL_SYNC")
+    public static class ShuffleSyncStmt extends AbstractInstruction {
+
+        public enum Mode {
+            DOWN("down"),
+            IDX("idx"),
+            UP("up"),
+            BFLY("bfly");
+
+            private final String ptxName;
+
+            Mode(String ptxName) {
+                this.ptxName = ptxName;
+            }
+
+            public String getPtxName() {
+                return ptxName;
+            }
+        }
+
+        public static final LIRInstructionClass<ShuffleSyncStmt> TYPE = LIRInstructionClass.create(ShuffleSyncStmt.class);
+
+        @Def protected Value result;
+        @Use protected Value src;
+        @Use protected Value operand;
+        private final Mode mode;
+
+        public ShuffleSyncStmt(Mode mode, Value result, Value src, Value operand) {
+            super(TYPE);
+            this.mode = mode;
+            this.result = result;
+            this.src = src;
+            this.operand = operand;
+        }
+
+        @Override
+        public void emitCode(PTXCompilationResultBuilder crb, PTXAssembler asm) {
+            // shfl.sync.<mode>.b32 dest, src, operand, 31, 0xFFFFFFFF;
+            asm.emitSymbol(TAB);
+            asm.emit("shfl.sync." + mode.getPtxName() + ".b32");
+            asm.emitSymbol(SPACE);
+            asm.emitValue(result);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(src);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(operand);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emit("31");
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emit("0xFFFFFFFF");
+            asm.delimiter();
+            asm.eol();
+        }
+    }
+
+    @Opcode("SWIZZLED_LOAD_FP16_STRIDE_32")
+    public static class SwizzledLoadFP16Stride32Stmt extends AbstractInstruction {
+
+        public static final LIRInstructionClass<SwizzledLoadFP16Stride32Stmt> TYPE
+                = LIRInstructionClass.create(SwizzledLoadFP16Stride32Stmt.class);
+
+        @Def protected Value result;
+        @Use protected Value localArray;
+        @Use protected Value row;
+        @Use protected Value column;
+        @Use protected Value stride;
+        @Def protected Value linIdx;
+        @Def protected Value byteOff;
+        @Def protected Value shifted;
+        @Def protected Value masked;
+        @Def protected Value xorTerm;
+        @Def protected Value swzByte;
+
+        public SwizzledLoadFP16Stride32Stmt(Value result, Value localArray, Value row, Value column, Value stride,
+                                            Value linIdx, Value byteOff, Value shifted, Value masked,
+                                            Value xorTerm, Value swzByte) {
+            super(TYPE);
+            this.result = result;
+            this.localArray = localArray;
+            this.row = row;
+            this.column = column;
+            this.stride = stride;
+            this.linIdx = linIdx;
+            this.byteOff = byteOff;
+            this.shifted = shifted;
+            this.masked = masked;
+            this.xorTerm = xorTerm;
+            this.swzByte = swzByte;
+        }
+
+        @Override
+        public void emitCode(PTXCompilationResultBuilder crb, PTXAssembler asm) {
+            // ----------------------------------------------------------------------------
+            // Swizzled FP16 load, stride-32 layout (16 fp16 cols = 32 bytes per row).
+            //
+            // Computes:  swzByte = byteOff ^ (((byteOff >> 7) & 0b111) << 4)
+            //            result  = sharedMem[swzByte]
+            //
+            // Constants (CUTLASS Swizzle<3,4,3>-equivalent for ldmatrix.x4.b16):
+            //   element size = 2 bytes (fp16) -> linIdx << 1 gives the byte offset
+            //   7  (S, shift-right amount): selects the row-index bits to permute.
+            //       byteOff >> 7 isolates bits [9:7], i.e. which group of 8 rows
+            //       (a 32-byte row * 4 = 128-byte = 2^7 boundary).
+            //   0b111 (MASK): 3 bits participate in the permutation (8 distinct rows).
+            //   4  (T, shift-left amount): where the XOR lands. 2^4 = 16 bytes, i.e.
+            //       the ldmatrix.x4 access granularity. Bits below 4 pass through
+            //       untouched, so the bottom 16 bytes move as a unit.
+            // ----------------------------------------------------------------------------
+
+            // linIdx = row * stride + column   (logical element index within the tile)
+            asm.emitSymbol(TAB);
+            asm.emit("mad.lo.s32 ");
+            asm.emitValue(linIdx);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(row);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(stride);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(column);
+            asm.delimiter();
+            asm.eol();
+
+            // byteOff = linIdx << 1   (element index -> byte offset; fp16 = 2 bytes)
+            asm.emitSymbol(TAB);
+            asm.emit("shl.b32 ");
+            asm.emitValue(byteOff);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(linIdx);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emit("1");
+            asm.delimiter();
+            asm.eol();
+
+            // shifted = byteOff >> 7   (7 = S: isolate the row-group bits to permute)
+            asm.emitSymbol(TAB);
+            asm.emit("shr.b32 ");
+            asm.emitValue(shifted);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(byteOff);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emit("7");
+            asm.delimiter();
+            asm.eol();
+
+            // masked = shifted & 0b111   (0b111 = MASK: keep 3 bits = 8 distinct rows)
+            asm.emitSymbol(TAB);
+            asm.emit("and.b32 ");
+            asm.emitValue(masked);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(shifted);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emit("7");
+            asm.delimiter();
+            asm.eol();
+
+            // xorTerm = masked << 4   (4 = T: place the permutation at the 16-byte boundary)
+            asm.emitSymbol(TAB);
+            asm.emit("shl.b32 ");
+            asm.emitValue(xorTerm);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(masked);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emit("4");
+            asm.delimiter();
+            asm.eol();
+
+            // swzByte = byteOff ^ xorTerm   (apply the swizzle)
+            asm.emitSymbol(TAB);
+            asm.emit("xor.b32 ");
+            asm.emitValue(swzByte);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(byteOff);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(xorTerm);
+            asm.delimiter();
+            asm.eol();
+
+            // result = ld.shared.b16 sharedMem[swzByte]   (16-bit load = one fp16)
+            asm.emitSymbol(TAB);
+            asm.emit("ld.shared.b16 ");
+            asm.emitValue(result);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(localArray);
+            asm.emitSymbol("[");
+            asm.emitValue(swzByte);
+            asm.emitSymbol("]");
+            asm.delimiter();
+            asm.eol();
+        }
+    }
+
+    @Opcode("SWIZZLED_LOAD_FP16_STRIDE_16")
+    public static class SwizzledLoadFP16Stride16Stmt extends AbstractInstruction {
+
+        public static final LIRInstructionClass<SwizzledLoadFP16Stride16Stmt> TYPE
+                = LIRInstructionClass.create(SwizzledLoadFP16Stride16Stmt.class);
+
+        @Def protected Value result;
+        @Use protected Value localArray;
+        @Use protected Value row;
+        @Use protected Value column;
+        @Use protected Value stride;
+        @Def protected Value linIdx;
+        @Def protected Value byteOff;
+        @Def protected Value shifted;
+        @Def protected Value masked;
+        @Def protected Value xorTerm;
+        @Def protected Value swzByte;
+
+        public SwizzledLoadFP16Stride16Stmt(Value result, Value localArray, Value row, Value column, Value stride,
+                                            Value linIdx, Value byteOff, Value shifted, Value masked,
+                                            Value xorTerm, Value swzByte) {
+            super(TYPE);
+            this.result = result;
+            this.localArray = localArray;
+            this.row = row;
+            this.column = column;
+            this.stride = stride;
+            this.linIdx = linIdx;
+            this.byteOff = byteOff;
+            this.shifted = shifted;
+            this.masked = masked;
+            this.xorTerm = xorTerm;
+            this.swzByte = swzByte;
+        }
+
+        @Override
+        public void emitCode(PTXCompilationResultBuilder crb, PTXAssembler asm) {
+            // ----------------------------------------------------------------------------
+            // Swizzled FP16 load, stride-16 layout (8 fp16 cols = 16 bytes per row).
+            // Used for the transposed B operand consumed by ldmatrix.x2.trans.b16.
+            //
+            // Computes:  swzByte = byteOff ^ (((byteOff >> 6) & 0b111) << 3)
+            //            result  = sharedMem[swzByte]
+            //
+            // Constants (same swizzle shape as stride-32, shifted down one bit because
+            // the row stride is halved: 16 bytes/row instead of 32):
+            //   element size = 2 bytes (fp16) -> linIdx << 1 gives the byte offset
+            //   6  (S): isolate the row-group bits. byteOff >> 6 selects bits [8:6]
+            //       (16-byte row * 4 = 64-byte = 2^6 boundary).
+            //   0b111 (MASK): 3 bits participate (8 distinct rows).
+            //   3  (T): XOR lands at 2^3 = 8 bytes, the ldmatrix.x2 access granularity
+            //       for this narrower tile.
+            //
+            // ----------------------------------------------------------------------------
+
+            // linIdx = row * stride + column   (logical element index within the tile)
+            asm.emitSymbol(TAB);
+            asm.emit("mad.lo.s32 ");
+            asm.emitValue(linIdx);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(row);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(stride);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(column);
+            asm.delimiter();
+            asm.eol();
+
+            // byteOff = linIdx << 1   (element index -> byte offset; fp16 = 2 bytes)
+            asm.emitSymbol(TAB);
+            asm.emit("shl.b32 ");
+            asm.emitValue(byteOff);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(linIdx);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emit("1");
+            asm.delimiter();
+            asm.eol();
+
+            // shifted = byteOff >> 6   (6 = S: row-group bits for the 16-byte stride)
+            asm.emitSymbol(TAB);
+            asm.emit("shr.b32 ");
+            asm.emitValue(shifted);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(byteOff);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emit("6");
+            asm.delimiter();
+            asm.eol();
+
+            // masked = shifted & 0b111   (0b111 = MASK: keep 3 bits = 8 distinct rows)
+            asm.emitSymbol(TAB);
+            asm.emit("and.b32 ");
+            asm.emitValue(masked);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(shifted);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emit("7");
+            asm.delimiter();
+            asm.eol();
+
+            // xorTerm = masked << 3   (3 = T: place permutation at the 8-byte boundary)
+            asm.emitSymbol(TAB);
+            asm.emit("shl.b32 ");
+            asm.emitValue(xorTerm);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(masked);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emit("3");
+            asm.delimiter();
+            asm.eol();
+
+            // swzByte = byteOff ^ xorTerm   (apply the swizzle)
+            asm.emitSymbol(TAB);
+            asm.emit("xor.b32 ");
+            asm.emitValue(swzByte);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(byteOff);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(xorTerm);
+            asm.delimiter();
+            asm.eol();
+
+            // result = ld.shared.b16 sharedMem[swzByte]   (16-bit load = one fp16)
+            asm.emitSymbol(TAB);
+            asm.emit("ld.shared.b16 ");
+            asm.emitValue(result);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(localArray);
+            asm.emitSymbol("[");
+            asm.emitValue(swzByte);
+            asm.emitSymbol("]");
+            asm.delimiter();
+            asm.eol();
+        }
+    }
+
+    @Opcode("SWIZZLED_LOAD_INT8")
+    public static class SwizzledLoadInt8Stmt extends AbstractInstruction {
+
+        public static final LIRInstructionClass<SwizzledLoadInt8Stmt> TYPE
+                = LIRInstructionClass.create(SwizzledLoadInt8Stmt.class);
+
+        @Def protected Value result;
+        @Use protected Value localArray;
+        @Use protected Value row;
+        @Use protected Value column;
+        @Use protected Value stride;
+        @Def protected Value linIdx;
+        @Def protected Value shifted;
+        @Def protected Value masked;
+        @Def protected Value xorTerm;
+        @Def protected Value swzByte;
+
+        public SwizzledLoadInt8Stmt(Value result, Value localArray, Value row, Value column, Value stride,
+                                    Value linIdx, Value shifted, Value masked, Value xorTerm, Value swzByte) {
+            super(TYPE);
+            this.result = result;
+            this.localArray = localArray;
+            this.row = row;
+            this.column = column;
+            this.stride = stride;
+            this.linIdx = linIdx;
+            this.shifted = shifted;
+            this.masked = masked;
+            this.xorTerm = xorTerm;
+            this.swzByte = swzByte;
+        }
+
+        @Override
+        public void emitCode(PTXCompilationResultBuilder crb, PTXAssembler asm) {
+            // ----------------------------------------------------------------------------
+            // Swizzled INT8 load. Same swizzle as FP16 stride-32 because ldmatrix moves
+            // 16 bytes per lane regardless of element type (int8 packs 2-per-.b16 lane,
+            // so the access granularity is still 16 bytes).
+            //
+            // Computes:  swzByte = linIdx ^ (((linIdx >> 7) & 0b111) << 4)
+            //            result  = sharedMem[swzByte]
+            //
+            // Constants (identical to FP16 stride-32):
+            //   element size = 1 byte (int8) -> linIdx is the byte offset, no <<1 needed.
+            //   7  (S): isolate the row-group bits (128-byte = 2^7 boundary).
+            //   0b111 (MASK): 3 bits participate (8 distinct rows).
+            //   4  (T): XOR lands at 2^4 = 16 bytes, the ldmatrix access granularity.
+            //
+            // The caller chooses the row stride: 32 (bytes) for the A operand,
+            // 16 (bytes) for the B operand staged at ldmatrix granularity. The swizzle
+            // math is the same for both; only the stride argument differs.
+            // ----------------------------------------------------------------------------
+
+            // linIdx = row * stride + column   (int8: this is the byte offset directly)
+            asm.emitSymbol(TAB);
+            asm.emit("mad.lo.s32 ");
+            asm.emitValue(linIdx);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(row);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(stride);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(column);
+            asm.delimiter();
+            asm.eol();
+
+            // shifted = linIdx >> 7   (7 = S: isolate the row-group bits to permute)
+            asm.emitSymbol(TAB);
+            asm.emit("shr.b32 ");
+            asm.emitValue(shifted);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(linIdx);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emit("7");
+            asm.delimiter();
+            asm.eol();
+
+            // masked = shifted & 0b111   (0b111 = MASK: keep 3 bits = 8 distinct rows)
+            asm.emitSymbol(TAB);
+            asm.emit("and.b32 ");
+            asm.emitValue(masked);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(shifted);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emit("7");
+            asm.delimiter();
+            asm.eol();
+
+            // xorTerm = masked << 4   (4 = T: place permutation at the 16-byte boundary)
+            asm.emitSymbol(TAB);
+            asm.emit("shl.b32 ");
+            asm.emitValue(xorTerm);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(masked);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emit("4");
+            asm.delimiter();
+            asm.eol();
+
+            // swzByte = linIdx ^ xorTerm   (apply the swizzle)
+            asm.emitSymbol(TAB);
+            asm.emit("xor.b32 ");
+            asm.emitValue(swzByte);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(linIdx);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(xorTerm);
+            asm.delimiter();
+            asm.eol();
+
+            // result = ld.shared.s8 sharedMem[swzByte]   (8-bit load = one int8)
+            asm.emitSymbol(TAB);
+            asm.emit("ld.shared.s8 ");
+            asm.emitValue(result);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(localArray);
+            asm.emitSymbol("[");
+            asm.emitValue(swzByte);
+            asm.emitSymbol("]");
+            asm.delimiter();
+            asm.eol();
+        }
+    }
+
+    @Opcode("SWIZZLED_STORE_FP16_STRIDE_32")
+    public static class SwizzledStoreFP16Stride32Stmt extends AbstractInstruction {
+
+        public static final LIRInstructionClass<SwizzledStoreFP16Stride32Stmt> TYPE
+                = LIRInstructionClass.create(SwizzledStoreFP16Stride32Stmt.class);
+
+        @Use protected Value localArray;
+        @Use protected Value row;
+        @Use protected Value column;
+        @Use protected Value stride;
+        @Use protected Value value;
+        @Def protected Value linIdx;
+        @Def protected Value byteOff;
+        @Def protected Value shifted;
+        @Def protected Value masked;
+        @Def protected Value xorTerm;
+        @Def protected Value swzByte;
+
+        public SwizzledStoreFP16Stride32Stmt(Value localArray, Value row, Value column, Value stride, Value value,
+                                             Value linIdx, Value byteOff, Value shifted, Value masked,
+                                             Value xorTerm, Value swzByte) {
+            super(TYPE);
+            this.localArray = localArray;
+            this.row = row;
+            this.column = column;
+            this.stride = stride;
+            this.value = value;
+            this.linIdx = linIdx;
+            this.byteOff = byteOff;
+            this.shifted = shifted;
+            this.masked = masked;
+            this.xorTerm = xorTerm;
+            this.swzByte = swzByte;
+        }
+
+        @Override
+        public void emitCode(PTXCompilationResultBuilder crb, PTXAssembler asm) {
+            // ----------------------------------------------------------------------------
+            // Swizzled FP16 store, stride-32 layout. Mirror of SwizzledLoadFP16Stride32:
+            // identical address computation, ends in a store instead of a load.
+            //
+            // Computes:  swzByte = byteOff ^ (((byteOff >> 7) & 0b111) << 4)
+            //            sharedMem[swzByte] = value
+            //
+            // Constants: 2 bytes/elem (<<1), 7 = S, 0b111 = MASK, 4 = T (16-byte boundary).
+            // ----------------------------------------------------------------------------
+
+            // linIdx = row * stride + column   (logical element index within the tile)
+            asm.emitSymbol(TAB);
+            asm.emit("mad.lo.s32 ");
+            asm.emitValue(linIdx);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(row);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(stride);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(column);
+            asm.delimiter();
+            asm.eol();
+
+            // byteOff = linIdx << 1   (element index -> byte offset; fp16 = 2 bytes)
+            asm.emitSymbol(TAB);
+            asm.emit("shl.b32 ");
+            asm.emitValue(byteOff);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(linIdx);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emit("1");
+            asm.delimiter();
+            asm.eol();
+
+            // shifted = byteOff >> 7   (7 = S: isolate the row-group bits to permute)
+            asm.emitSymbol(TAB);
+            asm.emit("shr.b32 ");
+            asm.emitValue(shifted);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(byteOff);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emit("7");
+            asm.delimiter();
+            asm.eol();
+
+            // masked = shifted & 0b111   (0b111 = MASK: keep 3 bits = 8 distinct rows)
+            asm.emitSymbol(TAB);
+            asm.emit("and.b32 ");
+            asm.emitValue(masked);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(shifted);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emit("7");
+            asm.delimiter();
+            asm.eol();
+
+            // xorTerm = masked << 4   (4 = T: place permutation at the 16-byte boundary)
+            asm.emitSymbol(TAB);
+            asm.emit("shl.b32 ");
+            asm.emitValue(xorTerm);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(masked);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emit("4");
+            asm.delimiter();
+            asm.eol();
+
+            // swzByte = byteOff ^ xorTerm   (apply the swizzle)
+            asm.emitSymbol(TAB);
+            asm.emit("xor.b32 ");
+            asm.emitValue(swzByte);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(byteOff);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(xorTerm);
+            asm.delimiter();
+            asm.eol();
+
+            // sharedMem[swzByte] = value   (st.shared.b16 = store one fp16)
+            asm.emitSymbol(TAB);
+            asm.emit("st.shared.b16 ");
+            asm.emitValue(localArray);
+            asm.emitSymbol("[");
+            asm.emitValue(swzByte);
+            asm.emitSymbol("]");
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(value);
+            asm.delimiter();
+            asm.eol();
+        }
+    }
+
+    @Opcode("SWIZZLED_STORE_FP16_STRIDE_16")
+    public static class SwizzledStoreFP16Stride16Stmt extends AbstractInstruction {
+
+        public static final LIRInstructionClass<SwizzledStoreFP16Stride16Stmt> TYPE
+                = LIRInstructionClass.create(SwizzledStoreFP16Stride16Stmt.class);
+
+        @Use protected Value localArray;
+        @Use protected Value row;
+        @Use protected Value column;
+        @Use protected Value stride;
+        @Use protected Value value;
+        @Def protected Value linIdx;
+        @Def protected Value byteOff;
+        @Def protected Value shifted;
+        @Def protected Value masked;
+        @Def protected Value xorTerm;
+        @Def protected Value swzByte;
+
+        public SwizzledStoreFP16Stride16Stmt(Value localArray, Value row, Value column, Value stride, Value value,
+                                             Value linIdx, Value byteOff, Value shifted, Value masked,
+                                             Value xorTerm, Value swzByte) {
+            super(TYPE);
+            this.localArray = localArray;
+            this.row = row;
+            this.column = column;
+            this.stride = stride;
+            this.value = value;
+            this.linIdx = linIdx;
+            this.byteOff = byteOff;
+            this.shifted = shifted;
+            this.masked = masked;
+            this.xorTerm = xorTerm;
+            this.swzByte = swzByte;
+        }
+
+        @Override
+        public void emitCode(PTXCompilationResultBuilder crb, PTXAssembler asm) {
+            // ----------------------------------------------------------------------------
+            // Swizzled FP16 store, stride-16 layout. Mirror of SwizzledLoadFP16Stride16.
+            //
+            // Computes:  swzByte = byteOff ^ (((byteOff >> 6) & 0b111) << 3)
+            //            sharedMem[swzByte] = value
+            //
+            // Constants: 2 bytes/elem (<<1), 6 = S, 0b111 = MASK, 3 = T (8-byte boundary).
+            // ----------------------------------------------------------------------------
+
+            // linIdx = row * stride + column   (logical element index within the tile)
+            asm.emitSymbol(TAB);
+            asm.emit("mad.lo.s32 ");
+            asm.emitValue(linIdx);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(row);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(stride);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(column);
+            asm.delimiter();
+            asm.eol();
+
+            // byteOff = linIdx << 1   (element index -> byte offset; fp16 = 2 bytes)
+            asm.emitSymbol(TAB);
+            asm.emit("shl.b32 ");
+            asm.emitValue(byteOff);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(linIdx);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emit("1");
+            asm.delimiter();
+            asm.eol();
+
+            // shifted = byteOff >> 6   (6 = S: row-group bits for the 16-byte stride)
+            asm.emitSymbol(TAB);
+            asm.emit("shr.b32 ");
+            asm.emitValue(shifted);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(byteOff);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emit("6");
+            asm.delimiter();
+            asm.eol();
+
+            // masked = shifted & 0b111   (0b111 = MASK: keep 3 bits = 8 distinct rows)
+            asm.emitSymbol(TAB);
+            asm.emit("and.b32 ");
+            asm.emitValue(masked);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(shifted);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emit("7");
+            asm.delimiter();
+            asm.eol();
+
+            // xorTerm = masked << 3   (3 = T: place permutation at the 8-byte boundary)
+            asm.emitSymbol(TAB);
+            asm.emit("shl.b32 ");
+            asm.emitValue(xorTerm);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(masked);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emit("3");
+            asm.delimiter();
+            asm.eol();
+
+            // swzByte = byteOff ^ xorTerm   (apply the swizzle)
+            asm.emitSymbol(TAB);
+            asm.emit("xor.b32 ");
+            asm.emitValue(swzByte);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(byteOff);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(xorTerm);
+            asm.delimiter();
+            asm.eol();
+
+            // sharedMem[swzByte] = value   (st.shared.b16 = store one fp16)
+            asm.emitSymbol(TAB);
+            asm.emit("st.shared.b16 ");
+            asm.emitValue(localArray);
+            asm.emitSymbol("[");
+            asm.emitValue(swzByte);
+            asm.emitSymbol("]");
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(value);
+            asm.delimiter();
+            asm.eol();
+        }
+    }
+
+    @Opcode("SWIZZLED_STORE_INT8")
+    public static class SwizzledStoreInt8Stmt extends AbstractInstruction {
+
+        public static final LIRInstructionClass<SwizzledStoreInt8Stmt> TYPE
+                = LIRInstructionClass.create(SwizzledStoreInt8Stmt.class);
+
+        @Use protected Value localArray;
+        @Use protected Value row;
+        @Use protected Value column;
+        @Use protected Value stride;
+        @Use protected Value value;
+        @Def protected Value linIdx;
+        @Def protected Value shifted;
+        @Def protected Value masked;
+        @Def protected Value xorTerm;
+        @Def protected Value swzByte;
+
+        public SwizzledStoreInt8Stmt(Value localArray, Value row, Value column, Value stride, Value value,
+                                     Value linIdx, Value shifted, Value masked, Value xorTerm, Value swzByte) {
+            super(TYPE);
+            this.localArray = localArray;
+            this.row = row;
+            this.column = column;
+            this.stride = stride;
+            this.value = value;
+            this.linIdx = linIdx;
+            this.shifted = shifted;
+            this.masked = masked;
+            this.xorTerm = xorTerm;
+            this.swzByte = swzByte;
+        }
+
+        @Override
+        public void emitCode(PTXCompilationResultBuilder crb, PTXAssembler asm) {
+            // ----------------------------------------------------------------------------
+            // Swizzled INT8 store. Mirror of SwizzledLoadInt8.
+            //
+            // Computes:  swzByte = linIdx ^ (((linIdx >> 7) & 0b111) << 4)
+            //            sharedMem[swzByte] = value
+            //
+            // Constants (same as FP16 stride-32; int8 ldmatrix still moves 16 bytes/lane):
+            //   1 byte/elem -> linIdx IS the byte offset (no <<1).
+            //   7 = S, 0b111 = MASK, 4 = T (16-byte boundary).
+            // Must stay identical to the load counterpart, or the round-trip breaks.
+            // ----------------------------------------------------------------------------
+
+            // linIdx = row * stride + column   (int8: this is the byte offset directly)
+            asm.emitSymbol(TAB);
+            asm.emit("mad.lo.s32 ");
+            asm.emitValue(linIdx);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(row);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(stride);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(column);
+            asm.delimiter();
+            asm.eol();
+
+            // shifted = linIdx >> 7   (7 = S: isolate the row-group bits to permute)
+            asm.emitSymbol(TAB);
+            asm.emit("shr.b32 ");
+            asm.emitValue(shifted);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(linIdx);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emit("7");
+            asm.delimiter();
+            asm.eol();
+
+            // masked = shifted & 0b111   (0b111 = MASK: keep 3 bits = 8 distinct rows)
+            asm.emitSymbol(TAB);
+            asm.emit("and.b32 ");
+            asm.emitValue(masked);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(shifted);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emit("7");
+            asm.delimiter();
+            asm.eol();
+
+            // xorTerm = masked << 4   (4 = T: place permutation at the 16-byte boundary)
+            asm.emitSymbol(TAB);
+            asm.emit("shl.b32 ");
+            asm.emitValue(xorTerm);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(masked);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emit("4");
+            asm.delimiter();
+            asm.eol();
+
+            // swzByte = linIdx ^ xorTerm   (apply the swizzle)
+            asm.emitSymbol(TAB);
+            asm.emit("xor.b32 ");
+            asm.emitValue(swzByte);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(linIdx);
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(xorTerm);
+            asm.delimiter();
+            asm.eol();
+
+            // sharedMem[swzByte] = value   (st.shared.s8 = store one int8)
+            asm.emitSymbol(TAB);
+            asm.emit("st.shared.s8 ");
+            asm.emitValue(localArray);
+            asm.emitSymbol("[");
+            asm.emitValue(swzByte);
+            asm.emitSymbol("]");
+            asm.emitSymbol(COMMA + SPACE);
+            asm.emitValue(value);
+            asm.delimiter();
+            asm.eol();
+        }
     }
 }

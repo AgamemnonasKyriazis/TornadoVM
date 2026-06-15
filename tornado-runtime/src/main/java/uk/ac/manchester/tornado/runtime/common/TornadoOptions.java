@@ -2,7 +2,7 @@
  * This file is part of Tornado: A heterogeneous programming framework:
  * https://github.com/beehive-lab/tornadovm
  *
- * Copyright (c) 2013-2025, APT Group, Department of Computer Science,
+ * Copyright (c) 2013-2026, APT Group, Department of Computer Science,
  * The University of Manchester. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
@@ -27,6 +27,9 @@ import static uk.ac.manchester.tornado.runtime.common.Tornado.getProperty;
 
 import uk.ac.manchester.tornado.api.types.arrays.TornadoNativeArray;
 
+import java.lang.management.ManagementFactory;
+import java.util.List;
+
 public class TornadoOptions {
 
     private static final String FALSE = "FALSE";
@@ -40,7 +43,13 @@ public class TornadoOptions {
     /**
      * Default PTX Compiler Flags.
      */
-    public static final String DEFAULT_PTX_COMPILER_FLAGS = getProperty("tornado.ptx.compiler.flags", "");
+    public static final String DEFAULT_METAL_COMPILER_FLAGS = getProperty("tornado.metal.compiler.flags", "");
+
+    /**
+     * Default PTX Compiler Flags. Make sure the flags are passed in the following format: <flag><space><flag value><another flag><space><another flag value> and so on.
+     * For example, CU_JIT_OPTIMIZATION_LEVEL 4 CU_JIT_TARGET 120
+     */
+    public static final String DEFAULT_PTX_COMPILER_FLAGS = getProperty("tornado.ptx.compiler.flags", "CU_JIT_OPTIMIZATION_LEVEL 4");
 
     /**
      * Default SPIR-V/LevelZero Flags.
@@ -80,6 +89,11 @@ public class TornadoOptions {
     public static final boolean PRINT_KERNEL_SOURCE = getBooleanValue("tornado.printKernel", FALSE);
 
     /**
+     * Priority of the Metal Backend. The higher the number, the more priority over
+     * the rest of the backends.
+     */
+    public static final int METAL_BACKEND_PRIORITY = Integer.parseInt(Tornado.getProperty("tornado.metal.priority", "0"));
+    /**
      * Priority of the PTX Backend. The higher the number, the more priority over
      * the rest of the backends.
      */
@@ -99,9 +113,9 @@ public class TornadoOptions {
      */
     public static final boolean FPGA_EMULATION = isFPGAEmulation();
     /**
-     * Option to set the device maximum memory usage. It is set to 1GB by default.
+     * Option to set the device maximum memory usage. It is set to 4GB by default.
      */
-    public static final long DEVICE_AVAILABLE_MEMORY = RuntimeUtilities.parseSize(System.getProperty("tornado.device.memory", "1GB"));
+    public static final long DEVICE_AVAILABLE_MEMORY = RuntimeUtilities.parseSize(System.getProperty("tornado.device.memory", "4GB"));
     /**
      * Option to enable exceptions for the OpenCL generated code. This is
      * experimental.
@@ -287,10 +301,6 @@ public class TornadoOptions {
      */
     public static final boolean OPTIMIZE_LOAD_STORE_SPIRV = getBooleanValue("tornado.spirv.loadstore", TRUE);
     /**
-     * Use Level Zero Thread Suggestions for the Thread Dispatcher. True by default.
-     */
-    public static final boolean USE_LEVELZERO_THREAD_DISPATCHER_SUGGESTIONS = getBooleanValue("tornado.spirv.levelzero.thread.dispatcher", TRUE);
-    /**
      * Memory Alignment for the Level Zero buffers (shared memory and or device
      * memory).
      */
@@ -442,6 +452,11 @@ public class TornadoOptions {
     public static final boolean ENABLE_OPENCL_PROFILING = getBooleanValue("tornado.opencl.profiling.enable", TRUE);
 
     /**
+     * Enable Metal Profiling. Enabled by default.
+     */
+    public static final boolean ENABLE_METAL_PROFILING = getBooleanValue("tornado.metal.profiling.enable", TRUE);
+
+    /**
      * Enable to dump the generated methods to a file for debugging purposes. Disabled by default.
      */
     public static final boolean DUMP_COMPILED_METHODS = getBooleanValue("tornado.compiled.dump", FALSE);
@@ -486,10 +501,18 @@ public class TornadoOptions {
      * resource is closed. This is False by default, since this area is global for all kernels. In near future,
      * we will change this to use a unique area per execution plan, and have the option to turn on and off
      * this flag as needed.
-     * 
+     *
      * @return boolean
      */
     public static boolean cleanUpAtomicsSpace() {
         return getBooleanValue("tornado.clean.atomics.space", FALSE);
+    }
+
+    public static boolean coopsUsed() {
+        List<String> jvmArgs = ManagementFactory.getRuntimeMXBean().getInputArguments();
+        boolean isUncompressed = jvmArgs.contains("-XX:-UseCompressedOops") ||
+                jvmArgs.contains("-XX:-UseCompressedClassPointers");
+
+        return isUncompressed ? false : true;
     }
 }

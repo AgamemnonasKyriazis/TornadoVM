@@ -4,7 +4,6 @@ open module tornado.unittests {
     requires lucene.core;
     requires java.desktop;
     requires jdk.incubator.vector;
-    requires com.microsoft.onnxruntime;
 
     exports uk.ac.manchester.tornado.unittests;
     exports uk.ac.manchester.tornado.unittests.api;
@@ -14,7 +13,6 @@ open module tornado.unittests {
     exports uk.ac.manchester.tornado.unittests.bitsets;
     exports uk.ac.manchester.tornado.unittests.branching;
     exports uk.ac.manchester.tornado.unittests.common;
-    exports uk.ac.manchester.tornado.unittests.dynamic;
     exports uk.ac.manchester.tornado.unittests.fields;
     exports uk.ac.manchester.tornado.unittests.flatmap;
     exports uk.ac.manchester.tornado.unittests.functional;

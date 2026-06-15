@@ -533,12 +533,7 @@ public class PTXNodeLIRBuilder extends NodeLIRBuilder {
         } else if (node instanceof IntegerBelowNode integerBelowNode) {
             final Value x = operand(integerBelowNode.getX());
             final Value y = operand(integerBelowNode.getY());
-
-            Value cond1 = getGen().newVariable(LIRKind.value(PTXKind.PRED));
-            append(new AssignStmt(cond1, new PTXBinary.Expr(PTXBinaryOp.SETP_LT, boolLirKind, x, gen.emitConstant(intLirKind, JavaConstant.forInt(0)))));
-            Value cond2 = getGen().newVariable(LIRKind.value(PTXKind.PRED));
-            append(new AssignStmt(cond2, new PTXBinary.Expr(PTXBinaryOp.SETP_GE, boolLirKind, x, y)));
-            append(new AssignStmt(result, new PTXBinary.Expr(PTXBinaryOp.BITWISE_OR, boolLirKind, cond1, cond2)));
+            append(new AssignStmt(result, new PTXBinary.Expr(PTXBinaryOp.SETP_GE, boolLirKind, x, y)));
         } else if (node instanceof IntegerEqualsNode integerEqualsNode) {
             final Value x = operand(integerEqualsNode.getX());
             final Value y = operand(integerEqualsNode.getY());
@@ -609,6 +604,10 @@ public class PTXNodeLIRBuilder extends NodeLIRBuilder {
             final Value x = getProcessedOperand(shortCircuitOrNode.getX(), shortCircuitOrNode.isXNegated());
             final Value y = getProcessedOperand(shortCircuitOrNode.getY(), shortCircuitOrNode.isYNegated());
             append(new AssignStmt(pred, new PTXBinary.Expr(PTXBinaryOp.BITWISE_OR, boolLirKind, x, y)));
+        } else if (node instanceof LogicConstantNode logicConstantNode) {
+            Variable predicateVar = getGen().newVariable(LIRKind.value(PTXKind.PRED));
+            append(new PTXLIRStmt.SetPredicateConstStmt(predicateVar, logicConstantNode.getValue()));
+            setResult(node, predicateVar);
         } else {
             throw new TornadoRuntimeException(String.format("logic node (class=%s)", node.getClass().getName()));
         }

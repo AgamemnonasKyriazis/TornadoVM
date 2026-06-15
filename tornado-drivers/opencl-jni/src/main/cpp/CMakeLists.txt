@@ -37,7 +37,7 @@ if(MSVC)
 	#https://github.com/mozilla/sccache
 	if(USE_Z7) #sccache
 		string(REPLACE "/Zi" "/Z7" CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG}")
-		string(REPLACE "/Zi" "/Z7" CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG}")
+		string(REPLACE "/Z7" "/Z7" CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG}")
 		string(REPLACE "/Zi" "/Z7" CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}")
 		string(REPLACE "/Zi" "/Z7" CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE}")
 		string(REPLACE "/Zi" "/Z7" CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO}")
@@ -86,36 +86,27 @@ add_library(tornado-opencl SHARED
 	source/opencl_time_utils.cpp
 	source/SPIRVOCLDispatcher.cpp
     source/OCLNativeCommandQueue.cpp
+    source/nvml_dynamic_loader.cpp
 )
 
+# NVML support detection (for headers only - library will be dynamically loaded at runtime)
+# This prevents hard dependency on nvml.dll/libnvidia-ml.so which breaks non-NVIDIA systems
 if(MSVC)
     if(CUDA_FOUND)
         find_path(NVML_INCLUDE_DIR NAMES nvml.h HINTS ${CUDA_INCLUDE_DIRS})
-        find_library(NVML_LIBRARY NAMES nvml PATHS ${CUDA_TOOLKIT_ROOT_DIR}/lib/x64)
-        if(NVML_INCLUDE_DIR AND NVML_LIBRARY)
-            set(EXTRA_LIBS ${EXTRA_LIBS} "${NVML_LIBRARY}")
-        endif()
     else()
-        message(STATUS "CUDA not found")
+        message(STATUS "CUDA not found - NVML power metrics will not be available")
     endif()
 else()
     find_path(NVML_INCLUDE_DIR NAMES nvml.h HINTS ${CUDA_INCLUDE_DIRS} /usr/local/cuda/targets/x86_64-linux/include /usr/local/cuda/targets/sbsa-linux/include)
-    find_library(NVML_LIBRARY NAMES nvidia-ml PATHS ${CUDA_TOOLKIT_ROOT_DIR}/lib/x64 /usr/local/cuda/targets/x86_64-linux/lib/stubs/ /usr/local/cuda/targets/sbsa-linux/lib/stubs/)
-    if(NVML_INCLUDE_DIR AND NVML_LIBRARY)
-        set(EXTRA_LIBS ${EXTRA_LIBS} "-L/usr/local/cuda/lib64/stubs -lnvidia-ml")
-    endif()
 endif()
 
-if(NVML_INCLUDE_DIR AND NVML_LIBRARY)
+if(NVML_INCLUDE_DIR)
     add_definitions(-DNVML_IS_SUPPORTED)
     include_directories(${NVML_INCLUDE_DIR})
+    message(STATUS "NVML headers found - power metrics will be dynamically loaded at runtime")
 else()
-    if(NOT NVML_INCLUDE_DIR)
-        message(STATUS "nvml.h not found")
-    endif()
-    if(NOT NVML_LIBRARY)
-        message(STATUS "nvml not found")
-    endif()
+    message(STATUS "NVML headers not found - power metrics will not be available")
 endif()
 
 if(MSVC OR APPLE)

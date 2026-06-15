@@ -35,6 +35,7 @@ import uk.ac.manchester.tornado.api.annotations.Reduce;
 import uk.ac.manchester.tornado.api.enums.DataTransferMode;
 import uk.ac.manchester.tornado.api.enums.TornadoVMBackendType;
 import uk.ac.manchester.tornado.api.exceptions.TornadoExecutionPlanException;
+import uk.ac.manchester.tornado.api.types.arrays.TornadoNativeArray;
 import uk.ac.manchester.tornado.unittests.common.TornadoTestBase;
 
 /**
@@ -60,9 +61,11 @@ public class TestVirtualDeviceKernel extends TornadoTestBase {
     @After
     public void after() {
         // make sure the source file generated is deleted
-        File fileLog = new File(SOURCE_DIR);
-        if (fileLog.exists()) {
-            fileLog.delete();
+        if (SOURCE_DIR != null) {
+            File fileLog = new File(SOURCE_DIR);
+            if (fileLog.exists()) {
+                fileLog.delete();
+            }
         }
     }
 
@@ -83,7 +86,7 @@ public class TestVirtualDeviceKernel extends TornadoTestBase {
             executionPlan.execute();
         }
 
-        String tornadoSDK = System.getenv("TORNADO_SDK");
+        String tornadoSDK = System.getenv("TORNADOVM_HOME");
         String filePath = tornadoSDK + "/examples/generated/virtualDevice/" + expectedCodeFile;
 
         File fileLog = new File(SOURCE_DIR);
@@ -105,6 +108,10 @@ public class TestVirtualDeviceKernel extends TornadoTestBase {
     public void testVirtualDeviceKernel() throws TornadoExecutionPlanException {
         assertNotBackend(TornadoVMBackendType.PTX);
         assertNotBackend(TornadoVMBackendType.SPIRV);
-        testVirtualDeviceKernel("virtualDeviceKernelGPU.cl");
+        assertNotBackend(TornadoVMBackendType.METAL);
+
+        boolean coops = TornadoNativeArray.ARRAY_HEADER == 16;
+        String kernelFile = coops ? "virtualDeviceKernelGPU.cl" : "virtualDeviceKernelGPU_uncompressed.cl";
+        testVirtualDeviceKernel(kernelFile);
     }
 }

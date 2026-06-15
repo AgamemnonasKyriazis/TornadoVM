@@ -41,11 +41,13 @@ import org.graalvm.compiler.nodes.StructuredGraph;
 import org.graalvm.compiler.nodes.ValueNode;
 import org.graalvm.compiler.nodes.ValuePhiNode;
 import org.graalvm.compiler.nodes.ValueProxyNode;
+import org.graalvm.compiler.nodes.calc.FloatConvertNode;
 import org.graalvm.compiler.nodes.calc.IsNullNode;
 import org.graalvm.compiler.nodes.extended.JavaReadNode;
 import org.graalvm.compiler.nodes.extended.JavaWriteNode;
 import org.graalvm.compiler.nodes.extended.ValueAnchorNode;
 import org.graalvm.compiler.nodes.java.LoadFieldNode;
+import org.graalvm.compiler.nodes.java.LoadIndexedNode;
 import org.graalvm.compiler.nodes.java.NewInstanceNode;
 import org.graalvm.compiler.nodes.memory.address.AddressNode;
 import org.graalvm.compiler.phases.BasePhase;
@@ -56,8 +58,10 @@ import uk.ac.manchester.tornado.drivers.spirv.graal.nodes.DivHalfNode;
 import uk.ac.manchester.tornado.drivers.spirv.graal.nodes.HalfFloatConstantNode;
 import uk.ac.manchester.tornado.drivers.spirv.graal.lir.SPIRVKind;
 import uk.ac.manchester.tornado.drivers.spirv.graal.nodes.AddHalfNode;
+import uk.ac.manchester.tornado.drivers.spirv.graal.nodes.LocalArrayNode;
 import uk.ac.manchester.tornado.drivers.spirv.graal.nodes.MultHalfNode;
 import uk.ac.manchester.tornado.drivers.spirv.graal.nodes.ReadHalfFloatNode;
+import uk.ac.manchester.tornado.drivers.spirv.graal.nodes.SPIRVConvertFloatToHalf;
 import uk.ac.manchester.tornado.drivers.spirv.graal.nodes.SPIRVConvertHalfToFloat;
 import uk.ac.manchester.tornado.drivers.spirv.graal.nodes.SubHalfNode;
 import uk.ac.manchester.tornado.drivers.spirv.graal.nodes.WriteHalfFloatNode;
@@ -102,7 +106,7 @@ public class TornadoHalfFloatReplacement extends BasePhase<TornadoHighTierContex
 
         // replace reads with halfFloat reads
         for (JavaReadNode javaRead : graph.getNodes().filter(JavaReadNode.class)) {
-            if (javaRead.successors().first() instanceof NewInstanceNode) {
+            if (javaRead.successors().first() instanceof NewInstanceNode && javaRead.getReadKind() == JavaKind.Short) {
                 NewInstanceNode newInstanceNode = (NewInstanceNode) javaRead.successors().first();
                 if (newInstanceNode.instanceClass().getAnnotation(HalfType.class) != null) {
                     if (newInstanceNode.successors().first() instanceof NewHalfFloatInstance) {
@@ -127,6 +131,14 @@ public class TornadoHalfFloatReplacement extends BasePhase<TornadoHighTierContex
                     newInstanceNode.replaceAtUsages(valueInput);
                     deleteFixed(newInstanceNode);
                     deleteFixed(newHalfFloatInstance);
+                } else if (newInstanceNode.successors().first() instanceof JavaReadNode readValue && readValue.getReadKind() == JavaKind.Float) {
+                    SPIRVConvertFloatToHalf convertFloatToHalf = new SPIRVConvertFloatToHalf(readValue);
+                    graph.addWithoutUnique(convertFloatToHalf);
+                    newInstanceNode.replaceAtUsages(convertFloatToHalf);
+                    for (NewHalfFloatInstance newHalfFloatInstance : readValue.usages().filter(NewHalfFloatInstance.class)) {
+                        deleteFixed(newHalfFloatInstance);
+                    }
+                    deleteFixed(newInstanceNode);
                 }
             }
         }
@@ -238,6 +250,15 @@ public class TornadoHalfFloatReplacement extends BasePhase<TornadoHighTierContex
         if (input instanceof ReadHalfFloatNode || input instanceof ValuePhiNode) {
             return input;
         }
+        // A LoadIndexed on a local-memory HalfFloat[] (LocalArrayNode with SPIRVKind.OP_TYPE_FLOAT_16)
+        // is lowered to a ReadHalfFloatNode in SPIRVLoweringProvider#lowerLoadIndexedNode, so it is
+        // a valid half-source for SPIRVConvertHalfToFloat. Without this case, reading a HalfFloat
+        // out of a local array and calling getFloat32() on it nulls out the convert node's input.
+        if (input instanceof LoadIndexedNode loadIndexed //
+                && loadIndexed.array() instanceof LocalArrayNode localArray //
+                && localArray.getSPIRVKind() == SPIRVKind.OP_TYPE_FLOAT_16) {
+            return input;
+        }
         if (input instanceof PiNode || input instanceof IsNullNode) {
             nodesToBeDeleted.add(input);
         }
@@ -265,6 +286,10 @@ public class TornadoHalfFloatReplacement extends BasePhase<TornadoHighTierContex
             HalfFloatConstantNode halfFloatConstantNode = new HalfFloatConstantNode(floatValue);
             graph.addWithoutUnique(halfFloatConstantNode);
             return halfFloatConstantNode;
+        } else if (halfFloatValue instanceof JavaReadNode javaReadNode && javaReadNode.getReadKind() == JavaKind.Float) {
+            SPIRVConvertFloatToHalf convertFloatToHalf = new SPIRVConvertFloatToHalf(javaReadNode);
+            graph.addWithoutUnique(convertFloatToHalf);
+            return convertFloatToHalf;
         } else {
             return halfFloatValue;
         }
@@ -406,6 +431,16 @@ public class TornadoHalfFloatReplacement extends BasePhase<TornadoHighTierContex
             }
             phiNode.replaceAtUsages(halfPhiNode);
             phiNode.safeDelete();
+            for (HalfFloatPlaceholder halfFloatPlaceholder : halfPhiNode.usages().filter(HalfFloatPlaceholder.class)) {
+                for (FloatConvertNode floatConvertNode : halfFloatPlaceholder.usages().filter(FloatConvertNode.class)) {
+                    SPIRVConvertHalfToFloat oclConvertHalfToFloat = new SPIRVConvertHalfToFloat(halfPhiNode);
+                    graph.addWithoutUnique(oclConvertHalfToFloat);
+                    floatConvertNode.replaceAtUsages(oclConvertHalfToFloat);
+                    floatConvertNode.safeDelete();
+                }
+                halfFloatPlaceholder.replaceAtUsages(halfPhiNode);
+                halfFloatPlaceholder.safeDelete();
+            }
             return halfPhiNode;
         } else {
             return phiNode;

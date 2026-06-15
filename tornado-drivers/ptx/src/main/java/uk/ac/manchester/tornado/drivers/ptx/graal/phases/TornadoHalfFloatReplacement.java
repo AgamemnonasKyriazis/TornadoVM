@@ -38,11 +38,13 @@ import org.graalvm.compiler.nodes.StructuredGraph;
 import org.graalvm.compiler.nodes.ValueNode;
 import org.graalvm.compiler.nodes.ValuePhiNode;
 import org.graalvm.compiler.nodes.ValueProxyNode;
+import org.graalvm.compiler.nodes.calc.FloatConvertNode;
 import org.graalvm.compiler.nodes.calc.IsNullNode;
 import org.graalvm.compiler.nodes.extended.JavaReadNode;
 import org.graalvm.compiler.nodes.extended.JavaWriteNode;
 import org.graalvm.compiler.nodes.extended.ValueAnchorNode;
 import org.graalvm.compiler.nodes.java.LoadFieldNode;
+import org.graalvm.compiler.nodes.java.LoadIndexedNode;
 import org.graalvm.compiler.nodes.java.NewInstanceNode;
 import org.graalvm.compiler.nodes.memory.address.AddressNode;
 import org.graalvm.compiler.phases.BasePhase;
@@ -52,11 +54,15 @@ import uk.ac.manchester.tornado.drivers.ptx.graal.HalfFloatStamp;
 import uk.ac.manchester.tornado.drivers.ptx.graal.lir.PTXKind;
 import uk.ac.manchester.tornado.drivers.ptx.graal.nodes.AddHalfNode;
 import uk.ac.manchester.tornado.drivers.ptx.graal.nodes.HalfFloatConstantNode;
+import uk.ac.manchester.tornado.drivers.ptx.graal.nodes.LocalArrayNode;
 import uk.ac.manchester.tornado.drivers.ptx.graal.nodes.MultHalfNode;
+import uk.ac.manchester.tornado.drivers.ptx.graal.nodes.PTXConvertFloatToHalf;
 import uk.ac.manchester.tornado.drivers.ptx.graal.nodes.PTXConvertHalfToFloat;
 import uk.ac.manchester.tornado.drivers.ptx.graal.nodes.PTXHalfFloatDivisionNode;
 import uk.ac.manchester.tornado.drivers.ptx.graal.nodes.ReadHalfFloatNode;
 import uk.ac.manchester.tornado.drivers.ptx.graal.nodes.SubHalfNode;
+import uk.ac.manchester.tornado.drivers.ptx.graal.nodes.SwizzledLoadFP16Stride16Node;
+import uk.ac.manchester.tornado.drivers.ptx.graal.nodes.SwizzledLoadFP16Stride32Node;
 import uk.ac.manchester.tornado.drivers.ptx.graal.nodes.WriteHalfFloatNode;
 import uk.ac.manchester.tornado.drivers.ptx.graal.nodes.vector.LoadIndexedVectorNode;
 import uk.ac.manchester.tornado.drivers.ptx.graal.nodes.vector.VectorAddHalfNode;
@@ -99,7 +105,7 @@ public class TornadoHalfFloatReplacement extends BasePhase<TornadoHighTierContex
 
         // replace reads with halfFloat reads
         for (JavaReadNode javaRead : graph.getNodes().filter(JavaReadNode.class)) {
-            if (javaRead.successors().first() instanceof NewInstanceNode) {
+            if (javaRead.successors().first() instanceof NewInstanceNode && javaRead.getReadKind() == JavaKind.Short) {
                 NewInstanceNode newInstanceNode = (NewInstanceNode) javaRead.successors().first();
                 if (newInstanceNode.instanceClass().getAnnotation(HalfType.class) != null) {
                     if (newInstanceNode.successors().first() instanceof NewHalfFloatInstance) {
@@ -124,6 +130,14 @@ public class TornadoHalfFloatReplacement extends BasePhase<TornadoHighTierContex
                     newInstanceNode.replaceAtUsages(valueInput);
                     deleteFixed(newInstanceNode);
                     deleteFixed(newHalfFloatInstance);
+                } else if (newInstanceNode.successors().first() instanceof JavaReadNode readValue && readValue.getReadKind() == JavaKind.Float) {
+                    PTXConvertFloatToHalf convertFloatToHalf = new PTXConvertFloatToHalf(readValue);
+                    graph.addWithoutUnique(convertFloatToHalf);
+                    newInstanceNode.replaceAtUsages(convertFloatToHalf);
+                    for (NewHalfFloatInstance newHalfFloatInstance : readValue.usages().filter(NewHalfFloatInstance.class)) {
+                        deleteFixed(newHalfFloatInstance);
+                    }
+                    deleteFixed(newInstanceNode);
                 }
             }
         }
@@ -232,7 +246,16 @@ public class TornadoHalfFloatReplacement extends BasePhase<TornadoHighTierContex
     }
     private static Node identifyFieldReplacement(Node input, ArrayList<Node> nodesToBeDeleted) {
         // the replacement is expected to be either the read node of a half value, or a phi node in case of accumulation
-        if (input instanceof ReadHalfFloatNode || input instanceof ValuePhiNode) {
+        if (input instanceof ReadHalfFloatNode || input instanceof ValuePhiNode || input instanceof SwizzledLoadFP16Stride32Node || input instanceof SwizzledLoadFP16Stride16Node) {
+            return input;
+        }
+        // A LoadIndexed on a local-memory HalfFloat[] (LocalArrayNode with PTXKind.F16) is
+        // lowered to a ReadHalfFloatNode in PTXLoweringProvider#lowerLoadIndexedNode, so it is
+        // a valid half-source for PTXConvertHalfToFloat. Without this case, reading a HalfFloat
+        // out of a local array and calling getFloat32() on it nulls out the convert node's input.
+        if (input instanceof LoadIndexedNode loadIndexed //
+                && loadIndexed.array() instanceof LocalArrayNode localArray //
+                && localArray.getPTXKind() == PTXKind.F16) {
             return input;
         }
         if (input instanceof PiNode || input instanceof IsNullNode) {
@@ -262,6 +285,10 @@ public class TornadoHalfFloatReplacement extends BasePhase<TornadoHighTierContex
             HalfFloatConstantNode halfFloatConstantNode = new HalfFloatConstantNode(floatValue);
             graph.addWithoutUnique(halfFloatConstantNode);
             return halfFloatConstantNode;
+        } else if (halfFloatValue instanceof JavaReadNode javaReadNode && javaReadNode.getReadKind() == JavaKind.Float) {
+            PTXConvertFloatToHalf convertFloatToHalf = new PTXConvertFloatToHalf(javaReadNode);
+            graph.addWithoutUnique(convertFloatToHalf);
+            return convertFloatToHalf;
         } else {
             return halfFloatValue;
         }
@@ -391,6 +418,16 @@ public class TornadoHalfFloatReplacement extends BasePhase<TornadoHighTierContex
             }
             phiNode.replaceAtUsages(halfPhiNode);
             phiNode.safeDelete();
+            for (HalfFloatPlaceholder halfFloatPlaceholder : halfPhiNode.usages().filter(HalfFloatPlaceholder.class)) {
+                for (FloatConvertNode floatConvertNode : halfFloatPlaceholder.usages().filter(FloatConvertNode.class)) {
+                    PTXConvertHalfToFloat oclConvertHalfToFloat = new PTXConvertHalfToFloat(halfPhiNode);
+                    graph.addWithoutUnique(oclConvertHalfToFloat);
+                    floatConvertNode.replaceAtUsages(oclConvertHalfToFloat);
+                    floatConvertNode.safeDelete();
+                }
+                halfFloatPlaceholder.replaceAtUsages(halfPhiNode);
+                halfFloatPlaceholder.safeDelete();
+            }
             return halfPhiNode;
         } else {
             return phiNode;
